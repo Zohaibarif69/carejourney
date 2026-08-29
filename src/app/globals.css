@@ -1,0 +1,94 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  /* Primary */
+  --color-primary: #0F766E;
+  --color-primary-hover: #115E59;
+  --color-primary-soft: #CCFBF1;
+
+  /* Neutral */
+  --color-background: #FAFAF8;
+  --color-surface: #FFFFFF;
+  --color-text: #17201F;
+  --color-text-secondary: #66706E;
+  --color-border: #E5E9E7;
+  --color-subtle: #F0F4F2;
+
+  /* Semantic */
+  --color-success: #15803D;
+  --color-success-bg: #DCFCE7;
+  --color-warning: #B45309;
+  --color-warning-bg: #FEF3C7;
+  --color-error: #B91C1C;
+  --color-error-bg: #FEE2E2;
+  --color-info: #2563EB;
+  --color-info-bg: #DBEAFE;
+
+  /* Visual Exploration accent — used ONLY in /visual */
+  --color-lavender: #7C6FAD;
+  --color-lavender-bg: #F1EEFA;
+  --color-lavender-border: #DDD6F3;
+
+  /* Font */
+  --font-sans: 'Inter', system-ui, sans-serif;
+
+  /* Custom text sizes */
+  --text-hero: 3rem;
+  --text-hero--line-height: 3.5rem;
+  --text-page: 2rem;
+  --text-page--line-height: 2.5rem;
+  --text-section: 1.375rem;
+  --text-section--line-height: 1.875rem;
+  --text-card: 1.0625rem;
+  --text-card--line-height: 1.5rem;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.5rem;
+  --text-small: 0.8125rem;
+  --text-small--line-height: 1.25rem;
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1rem;
+}
+
+html,
+body,
+#root,
+#__next,
+main {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-background);
+  color: var(--color-text);
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
+*:hover {
+  scrollbar-width: thin;
+}
+
+*:hover::-webkit-scrollbar {
+  display: block;
+  width: 4px;
+}
+
+*:hover::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 2px;
+}
