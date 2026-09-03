@@ -3,17 +3,17 @@
 import { HashRouter, Routes, Route } from "react-router-dom";
 import { AppProvider } from "@/context/AppContext";
 import Layout from "@/components/Layout";
-import HomePage from "@/pages/HomePage";
-import SearchPage from "@/pages/SearchPage";
-import ProviderPage from "@/pages/ProviderPage";
-import VisualPage from "@/pages/VisualPage";
-import JourneyNewPage from "@/pages/JourneyNewPage";
-import JourneyDashboardPage from "@/pages/JourneyDashboardPage";
-import JourneyDocumentsPage from "@/pages/JourneyDocumentsPage";
-import JourneyConsultationPage from "@/pages/JourneyConsultationPage";
-import JourneyRequestPage from "@/pages/JourneyRequestPage";
-import FoxitAgentPage from "@/pages/FoxitAgentPage";
-import ProfilePage from "@/pages/ProfilePage";
+import HomePage from "@/spa-views/HomePage";
+import SearchPage from "@/spa-views/SearchPage";
+import ProviderPage from "@/spa-views/ProviderPage";
+import VisualPage from "@/spa-views/VisualPage";
+import JourneyNewPage from "@/spa-views/JourneyNewPage";
+import JourneyDashboardPage from "@/spa-views/JourneyDashboardPage";
+import JourneyDocumentsPage from "@/spa-views/JourneyDocumentsPage";
+import JourneyConsultationPage from "@/spa-views/JourneyConsultationPage";
+import JourneyRequestPage from "@/spa-views/JourneyRequestPage";
+import FoxitAgentPage from "@/spa-views/FoxitAgentPage";
+import ProfilePage from "@/spa-views/ProfilePage";
 
 export default function ClientApp() {
   return (
