@@ -1,170 +1,143 @@
-# CareJourney — Next.js + SQLite Backend
+# CareJourney
 
-This is the **full Next.js replacement** for the original CareJourney project that used Xano as backend.
-Everything works exactly the same — all 10 pages, all features, all 6 third-party APIs — just powered by Next.js API routes and SQLite instead of Xano.
+CareJourney is a Next.js application that guides a patient from "I need to find a doctor" all the way through booking an appointment: searching for a provider, uploading and processing medical documents, completing a pre-visit consultation, e-signing a consent form, and submitting/confirming an appointment request.
 
----
+It's a single Next.js project — a React SPA shell for the UI and a set of Next.js API routes for the backend — backed by SQLite (via Turso/libSQL) and several third-party services for search, AI, document processing, e-signature, and visual exploration.
 
-## What changed vs the Xano version
+## How it works: the patient journey
 
-| Before (Xano)               | After (Next.js)                        |
-|-----------------------------|----------------------------------------|
-| Xano managed database       | SQLite file (`carejourney.db`)         |
-| Xano custom API endpoints   | Next.js API routes (`/api/...`)        |
-| `src/services/xanoClient.ts`| `src/services/apiClient.ts`            |
-| `VITE_XANO_BASE_URL` env var| `NEXT_PUBLIC_APP_URL` env var          |
-| `VITE_USE_MOCKS` feature flag| Not needed — graceful fallbacks built-in |
-| Vite build tool             | Next.js (React + API in one project)  |
+The app is built around one core object, a **Journey**, which represents a single patient's path through the product from provider selection to confirmed appointment.
 
-**Frontend pages and components are 100% unchanged.**
+1. **Search** (`/search`) — the patient enters a country, city, and care category (plus an optional free-text concern). The backend queries SerpApi for real providers in that area, then asks an LLM to rank and annotate each result with match reasons and a match strength (`Strong` / `Good` / `Possible`). Results are cached in the `providers` table so repeat searches are cheap.
+2. **Provider detail** (`/providers/:id`) — view a provider's specialties, services, and rating.
+3. **Visual exploration** (`/visual`) — optional step where a patient can upload a photo and preview a "visual experience" (e.g. a treatment/cosmetic preview) via Perfect Corp, before committing to a journey.
+4. **Start a journey** (`/journey/new`) — creates a `Journey` row tying together the chosen provider, the service, and the patient's basic info.
+5. **Documents** (`/journey/:id/documents`) — the patient describes what documents they have in plain language; an LLM classifies that into a structured list of document types (report, prescription, photo, lab result, referral, general). Each document is then uploaded, sent to Foxit for OCR/processing, and can optionally go through an AI-assisted redaction pass (see below) before being sealed.
+6. **Consultation** (`/journey/:id/consultation`) — a dynamic form (schema generated per-journey) collects pre-visit answers, saved back to the journey.
+7. **Consent / e-signature** — a consent document is generated (via Doctavian's document-generation pipeline) and sent for e-signature (via Foxit eSign), which is a deliberately separate, human-triggered action (see [Two Foxit integrations](#two-separate-foxit-integrations) below).
+8. **Request** (`/journey/:id/request`) — the patient submits an appointment request; the provider/staff side confirms it, moving the request from `requested` to `confirmed`.
+9. **Foxit agent** (`/journey/:id/agent`) — a free-form agentic assistant, backed by a live tool-use loop over Foxit's MCP document tools, for ad-hoc document operations.
 
----
+A journey moves through the statuses `draft → documents → consultation → signing → requested → confirmed` as the patient progresses.
 
-## Project structure
+## Architecture
 
-```
-carejourney-nextjs/
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx              # Next.js root layout
-│   │   ├── page.tsx                # Entry point
-│   │   ├── globals.css
-│   │   ├── ClientApp.tsx           # React Router SPA (all 10 pages)
-│   │   └── api/                    # ← ALL BACKEND ROUTES LIVE HERE
-│   │       ├── providers/
-│   │       │   ├── search/route.ts     → SerpApi + LLM ranking
-│   │       │   └── [id]/route.ts       → SQLite cache read
-│   │       ├── journeys/
-│   │       │   ├── route.ts            → POST create journey
-│   │       │   └── [id]/
-│   │       │       ├── route.ts        → GET + PATCH journey
-│   │       │       ├── documents/
-│   │       │       │   ├── classify/route.ts → LLM classification
-│   │       │       │   └── confirm/route.ts  → Create doc rows
-│   │       │       ├── consultation/
-│   │       │       │   ├── generate/route.ts → Doctavian generate
-│   │       │       │   └── route.ts          → PATCH save answers
-│   │       │       ├── sign/route.ts         → Doctavian eSign
-│   │       │       └── request/route.ts      → Submit appointment
-│   │       ├── documents/
-│   │       │   └── [id]/
-│   │       │       ├── upload/route.ts       → File save + Foxit OCR
-│   │       │       ├── status/route.ts       → Poll Foxit job
-│   │       │       └── redact/
-│   │       │           ├── suggest/route.ts  → Nutrient DWS detect
-│   │       │           └── seal/route.ts     → Nutrient DWS seal
-│   │       ├── requests/
-│   │       │   └── [id]/
-│   │       │       ├── route.ts              → GET status
-│   │       │       └── confirm/route.ts      → POST confirm
-│   │       └── visual/
-│   │           └── explore/route.ts          → Perfect Corp
-│   ├── components/     # Original — unchanged
-│   ├── pages/          # Original — unchanged
-│   ├── context/        # Original — unchanged
-│   ├── types/index.ts  # Original — unchanged
-│   ├── lib/
-│   │   ├── db.ts           # SQLite setup + migrations
-│   │   ├── llm.ts          # Anthropic / OpenAI helper
-│   │   └── apiHelpers.ts   # ok() / err() response helpers
-│   └── services/
-│       ├── apiClient.ts    # Replaces xanoClient.ts
-│       └── index.ts        # Same interface, calls /api/* instead of Xano
-├── .env.local.example  # Copy this to .env.local and fill in your keys
-├── next.config.ts
-├── tailwind.config.ts
-└── carejourney.db      # Auto-created on first run (SQLite file)
-```
+This is one Next.js app with two halves that live in the same codebase:
 
----
+- **Frontend:** a client-side single-page app. `src/app/ClientApp.tsx` mounts a React Router tree with all the pages listed above; the actual page components live in `src/spa-views/`, with shared UI in `src/components/` and app-wide state in `src/context/AppContext.tsx`.
+- **Backend:** Next.js Route Handlers under `src/app/api/`. Each route is a thin layer that validates input, talks to SQLite via `src/lib/db.ts`, and calls out to whichever third-party API the step needs.
+- **Data access layer:** `src/services/apiClient.ts` is the single place the frontend calls into `/api/*` — components never call `fetch` directly.
+
+### Two separate Foxit integrations
+
+Foxit shows up twice in this codebase, deliberately kept apart:
+
+- **`src/lib/foxitAgent.ts`** — an agentic tool-use loop (Gemini as the reasoning model) that talks to a live Foxit MCP server over HTTP streaming. It has real, reversible document tools (extract, convert, watermark, etc.) but **signing is intentionally excluded** from its tool catalog.
+- **`src/lib/foxitEsign.ts`** — a separate, directly-called integration (its own OAuth2 client-credentials flow, its own API base) used only for the human-triggered "send this for signature" action. The agent above can never reach this on its own.
+
+This split means an AI agent can help a patient manipulate their documents, but only a person clicking "Sign & Send" can actually put a document in front of someone for a legal signature.
+
+### AI / LLM usage
+
+- `src/lib/llm.ts` is a single `callLLM(system, user)` function that can be backed by **Anthropic (Claude)**, **OpenAI (GPT-4o)**, or **Gemini**, selected via `LLM_PROVIDER`. It's used for:
+  - Ranking and annotating provider search results
+  - Classifying a patient's free-text description of their documents into structured labels
+- `src/lib/foxitAgent.ts` uses Gemini specifically (function-calling / tool-use), independent of the `LLM_PROVIDER` setting above, to drive the document agent.
+
+### File storage
+
+`src/lib/storage.ts` abstracts file storage behind one `saveFile()` call:
+- If `BLOB_READ_WRITE_TOKEN` is set (and `USE_LOCAL_STORAGE` isn't `true`), files go to **Vercel Blob** and get a persistent CDN URL.
+- Otherwise, files are written to `./public/uploads` and served locally via `src/app/api/files/[...path]/route.ts`.
+
+## Data model
+
+Database access goes through `src/lib/db.ts`, using `@libsql/client` (Turso-compatible libSQL) so the same code works against a local SQLite file (`file:./carejourney.db`) or a hosted Turso database — which matters because plain local SQLite files don't survive on serverless platforms like Vercel. The schema is created automatically the first time the API runs (`ensureSchema()`), so there's no manual migration step.
+
+| Table | Purpose |
+|---|---|
+| `providers` | Cached, ranked SerpApi results, keyed by SerpApi place ID so repeat searches update rather than duplicate |
+| `journeys` | The core record: provider, patient info, visual session, consultation answers/schema, signed status, overall journey status |
+| `documents` | One row per document in a journey: label, uploaded file, Foxit job status, extracted text, redaction suggestions, seal status |
+| `requests` | Appointment request lifecycle: `requested` → `confirmed`, with timestamps |
+| `agent_classifications` | Audit log of every LLM call that classified a patient's described documents |
+
+## API surface
+
+All routes live under `src/app/api/`:
+
+| Route | Purpose |
+|---|---|
+| `GET /api/providers/search` | Search + LLM-rank providers (SerpApi + LLM) |
+| `GET /api/providers/[id]` | Read a cached provider |
+| `POST /api/journeys` | Create a journey |
+| `GET /PATCH /api/journeys/[id]` | Read / update a journey |
+| `POST /api/journeys/[id]/documents/classify` | LLM-classify a patient's document description |
+| `POST /api/journeys/[id]/documents/confirm` | Create document rows from the confirmed classification |
+| `POST /api/journeys/[id]/consultation/generate` | Generate the consultation form schema |
+| `PATCH /api/journeys/[id]/consultation` | Save consultation answers |
+| `POST /api/journeys/[id]/sign` | Trigger e-signature (Doctavian/Foxit eSign) |
+| `POST /api/journeys/[id]/request` | Submit the appointment request |
+| `POST /api/documents/[id]/upload` | Upload a file, kick off Foxit processing |
+| `GET /api/documents/[id]/status` | Poll a document's Foxit processing status |
+| `POST /api/documents/[id]/redact/suggest` | Get AI-suggested redactions (Nutrient DWS) |
+| `POST /api/documents/[id]/redact/seal` | Seal a document after redaction review |
+| `POST /api/documents/agent-process` | Drive the Foxit MCP agent loop |
+| `POST /api/documents/foxit-esign` | Low-level Foxit eSign call |
+| `GET /api/requests/[id]` / `POST /api/requests/[id]/confirm` | Appointment request status / confirmation |
+| `POST /api/visual/explore` | Perfect Corp visual exploration |
+| `GET /api/files/[...path]` | Serve locally-stored uploads |
+
+## Third-party integrations
+
+| Service | Used for | Env vars |
+|---|---|---|
+| **SerpApi** | Provider search results | `SERPAPI_KEY` |
+| **Anthropic / OpenAI / Gemini** | Provider ranking, document classification | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` or `GEMINI_API_KEY`, `LLM_PROVIDER` |
+| **Foxit PDF Services (MCP)** | Document OCR/processing, agentic document tools | started via `npm run foxit-mcp`, reached at `FOXIT_MCP_URL` |
+| **Foxit eSign** | Human-triggered e-signature | `FOXIT_ESIGN_CLIENT_ID`, `FOXIT_ESIGN_CLIENT_SECRET`, `FOXIT_ESIGN_TOKEN_URL` |
+| **Doctavian** | Consent document generation from a template | `DOCTAVIAN_API_KEY`, `DOCTAVIAN_API_URL` |
+| **Nutrient DWS** | Redaction suggestion + sealing | `NUTRIENT_API_KEY`, `NUTRIENT_API_URL` |
+| **Perfect Corp** | Visual exploration | `PERFECT_CORP_API_KEY`, `PERFECT_CORP_API_URL` |
+| **Vercel Blob** | Persistent file storage | `BLOB_READ_WRITE_TOKEN` (or `USE_LOCAL_STORAGE=true` for local dev) |
+| **Turso (libSQL)** | Database | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` |
+
+Every integration degrades instead of failing outright when its key is missing or the service is down:
+
+| Service | Fallback behavior |
+|---|---|
+| SerpApi | Returns an empty provider list |
+| LLM | Returns providers unranked with a generic match reason |
+| Foxit (processing) | Marks the document processed with placeholder text |
+| Nutrient DWS | Falls back to text-pattern-based redaction suggestions |
+| Doctavian | Serves the built-in consent template (`doctavian-assets/consent-template.docx`) |
+| Perfect Corp | Returns the original uploaded image unmodified |
+
+**One real constraint worth knowing:** Foxit's eSign service fetches file URLs over the public internet, so `NEXT_PUBLIC_APP_URL` has to point somewhere publicly reachable (a real deployment or a tunnel like ngrok) — a bare `localhost` URL won't work for the signing step.
+
+## Prerequisites
+
+- Node.js 18+
+- At minimum, no keys are required to run the app (every integration has a fallback) — but you'll want real keys for the parts you're testing
 
 ## Setup
 
-### 1. Install dependencies
-```bash
-npm install
-```
+1. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-### 2. Configure environment variables
-```bash
-cp .env.local.example .env.local
-```
+2. **Configure environment variables**
+   ```bash
+   cp .env.local.example .env.local
+   ```
+   Fill in whichever keys you need from the table above.
 
-Open `.env.local` and fill in your API keys:
+3. **Run the development server**
+   ```bash
+   npm run dev
+   ```
+   This runs the Next.js dev server and the Foxit PDF MCP sidecar together (needed for the document agent). Use `npm run dev:next-only` to skip the MCP server if you don't need the agent page.
 
-```env
-# Required for provider search
-SERPAPI_KEY=your_serpapi_key
+   Open [http://localhost:3000](http://localhost:3000). The database schema is created automatically on first API call.
 
-# Required for document classification + provider ranking
-ANTHROPIC_API_KEY=your_anthropic_key
-LLM_PROVIDER=anthropic
-
-# Required for visual exploration
-PERFECT_CORP_API_KEY=your_perfect_corp_key
-PERFECT_CORP_API_URL=https://api.perfectcorp.com/v1
-
-# Required for document OCR/extraction
-FOXIT_API_KEY=your_foxit_key
-FOXIT_API_URL=https://api.foxit.com/v1
-
-# Required for redaction
-NUTRIENT_API_KEY=your_nutrient_key
-NUTRIENT_API_URL=https://api.nutrient.io/v1
-
-# Required for consultation + signing
-DOCTAVIAN_API_KEY=your_doctavian_key
-DOCTAVIAN_API_URL=https://api.doctavian.com/v1
-```
-
-### 3. Run development server
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000)
-
-The SQLite database (`carejourney.db`) is created automatically on first API call.
-
----
-
-## How the database works
-
-No setup needed — it creates itself. Tables are:
-
-- **providers** — cached SerpApi results (re-queried and updated on each search)
-- **journeys** — central record tying provider + patient + documents + status
-- **documents** — one row per document in a journey, tracks Foxit job status
-- **requests** — appointment request with requested → confirmed status
-- **agent_classifications** — audit log of every LLM classify call
-
-The SQLite file lives at `./carejourney.db` by default. Change `DATABASE_PATH` in `.env.local` to move it.
-
----
-
-## Graceful fallbacks
-
-Every third-party API call has a fallback so the app never crashes completely if a key is missing or an API is down:
-
-- **SerpApi unavailable** → returns empty provider list
-- **LLM unavailable** → returns providers unranked with a generic match reason
-- **Foxit unavailable** → marks document as processed with placeholder text
-- **Nutrient DWS unavailable** → generates fallback redaction suggestions from text patterns
-- **Doctavian unavailable** → serves a built-in consent form template
-- **Perfect Corp unavailable** → returns the original uploaded image as the result
-
----
-
-## Deploying
-
-For production deployment (Vercel, Railway, Fly.io):
-
-1. Set all env vars in your deployment platform's dashboard
-2. For Vercel: SQLite works locally but not on serverless — switch to [Turso](https://turso.tech) (libSQL, SQLite-compatible) or PostgreSQL (Neon/Supabase) and update `src/lib/db.ts`
-3. For Railway/Fly.io (persistent server): SQLite works fine, just mount a persistent volume
-
-For a quick persistent-server deploy:
-```bash
-npm run build
-npm start
-```
