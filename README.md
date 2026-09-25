@@ -113,7 +113,6 @@ Every integration degrades instead of failing outright when its key is missing o
 | Doctavian | Serves the built-in consent template (`doctavian-assets/consent-template.docx`) |
 | Perfect Corp | Returns the original uploaded image unmodified |
 
-**One real constraint worth knowing:** Foxit's eSign service fetches file URLs over the public internet, so `NEXT_PUBLIC_APP_URL` has to point somewhere publicly reachable (a real deployment or a tunnel like ngrok) — a bare `localhost` URL won't work for the signing step.
 
 ## Prerequisites
 
